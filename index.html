@@ -13,6 +13,7 @@
         }
         canvas {
             display: block;
+            /* Removed pixelated rendering to allow HD super-sampling */
         }
     </style>
 </head>
@@ -23,155 +24,256 @@
     <script src="words.js"></script>
 
     <script>
-        // Main visible canvas
-        const displayCanvas = document.getElementById('matrix');
-        const displayCtx = displayCanvas.getContext('2d');
-
-        // Offscreen canvas for the base Matrix rain effect
-        const canvas = document.createElement('canvas');
+        const canvas = document.getElementById('matrix');
         const ctx = canvas.getContext('2d');
 
-        // Interactivity State
-        let mouseX = -1000;
-        let mouseY = -1000;
-        let waves = [];
+        // Super-sample the canvas for true HD High-Quality text when zooming
+        const HD_SCALER = 4; // Renders the text internally at 400% resolution
 
-        // Track mouse position
-        window.addEventListener('mousemove', (e) => {
-            mouseX = e.clientX;
-            mouseY = e.clientY;
-        });
-
-        window.addEventListener('mouseout', () => {
-            mouseX = -1000;
-            mouseY = -1000;
-        });
-
-        // Track clicks to trigger waves
-        window.addEventListener('click', (e) => {
-            waves.push({
-                x: e.clientX,
-                y: e.clientY,
-                radius: 0,
-                maxRadius: Math.max(window.innerWidth, window.innerHeight),
-                speed: 15
-            });
-        });
-
-        // Make the canvases full screen
-        displayCanvas.width = window.innerWidth;
-        displayCanvas.height = window.innerHeight;
-        canvas.width = window.innerWidth;
-        canvas.height = window.innerHeight;
+        // Make the canvas full screen but with a massive internal resolution
+        canvas.width = window.innerWidth * HD_SCALER;
+        canvas.height = window.innerHeight * HD_SCALER;
+        canvas.style.width = window.innerWidth + 'px';
+        canvas.style.height = window.innerHeight + 'px';
+        ctx.scale(HD_SCALER, HD_SCALER);
 
         // Pull the characters from the external words.js file
         const chars = matrixConfig.characters;
         const charArray = chars.split('');
-
-        // Pull the special easter egg words from the external words.js file
         const specialWords = matrixConfig.specialWords;
 
         const fontSize = 16;
-        const columns = canvas.width / fontSize; // Number of columns for the rain
 
-        // Array to track the Y coordinate (drop position) of each column
-        // We start them all at 1
+        // Grid arrays to mathematically track exact characters and their brightness
+        // This is the key to achieving 100% absolute pure black fading
+        let columns = Math.ceil(canvas.width / fontSize);
+        let rows = Math.ceil(canvas.height / fontSize) + 100; // Extra buffer for voids above screen
+
         const drops = [];
-        // Array to track if a column is currently spelling a special word
         const activeWords = [];
-        for (let x = 0; x < columns; x++) {
-            // Start with staggered negative values so the rain begins organically, not all at once
-            drops[x] = -Math.floor(Math.random() * 100);
-            activeWords[x] = null;
+        const gridChars = [];
+        const gridBright = [];
+        const speeds = [];
+        const lastHeadY = [];
+        const anomalies = [];
+        const canSidestep = [];
+        const sidestepOffset = [];
+        const dropDeathY = [];
+
+        function setDropDeathY(i) {
+            const screenRows = window.innerHeight / fontSize;
+            // 20% chance to die early, somewhere in the bottom 50% of the screen
+            if (Math.random() < 0.20) {
+                dropDeathY[i] = screenRows * 0.5 + Math.random() * (screenRows * 0.4);
+            } else {
+                dropDeathY[i] = screenRows + 20; // Normal offscreen death
+            }
         }
 
+        function initData() {
+            // Use window.innerWidth/Height so the grid relies on physical screen size
+            columns = Math.ceil(window.innerWidth / fontSize);
+            rows = Math.ceil(window.innerHeight / fontSize) + 100;
+
+            for (let i = 0; i < columns; i++) {
+                if (drops[i] === undefined) {
+                    drops[i] = -Math.floor(Math.random() * 100);
+                    activeWords[i] = null;
+                    gridChars[i] = [];
+                    gridBright[i] = [];
+                    // Slower, more uniform speeds. Range is now 0.6x to 1.2x (was 0.5x to 2.0x)
+                    speeds[i] = 0.6 + Math.random() * 0.6;
+                    lastHeadY[i] = -999;
+                    anomalies[i] = null;
+                    canSidestep[i] = Math.random() < 0.20; // 20% of trails can jump horizontally
+                    sidestepOffset[i] = 0;
+                    setDropDeathY(i);
+                }
+                // Fill any new empty cells with random characters and 0 brightness (black)
+                for (let j = gridChars[i].length || 0; j < rows; j++) {
+                    gridChars[i][j] = charArray[Math.floor(Math.random() * charArray.length)];
+                    gridBright[i][j] = 0;
+                }
+            }
+        }
+        initData();
+
+        // --- INTERACTIVITY STATE ---
+        let currentZoom = 1.0;
+        let glowingClusters = [];
+
+        // Handle mouse wheel for global zoom
+        window.addEventListener('wheel', (e) => {
+            canvas.style.transformOrigin = `${e.clientX}px ${e.clientY}px`;
+            if (e.deltaY < 0) {
+                currentZoom *= 1.15;
+            } else {
+                currentZoom /= 1.15;
+            }
+            currentZoom = Math.max(1.0, Math.min(40.0, currentZoom));
+
+            // With HD super-sampling, we don't need forced CSS pixelation.
+            // The canvas will naturally render sharp HD text natively.
+
+            canvas.style.transform = `scale(${currentZoom})`;
+        });
+
+        // Handle clicks for sparks
+        window.addEventListener('click', (e) => {
+            const rect = canvas.getBoundingClientRect();
+            const worldX = (e.clientX - rect.left) / currentZoom;
+            const worldY = (e.clientY - rect.top) / currentZoom;
+
+            const numSparks = 35;
+            for (let i = 0; i < numSparks; i++) {
+                const radius = Math.pow(Math.random(), 2) * 180;
+                const angle = Math.random() * Math.PI * 2;
+                const cx = worldX + Math.cos(angle) * radius;
+                const cy = worldY + Math.sin(angle) * radius;
+
+                glowingClusters.push({
+                    x: Math.floor(cx / fontSize) * fontSize,
+                    y: Math.floor(cy / fontSize) * fontSize,
+                    char: charArray[Math.floor(Math.random() * charArray.length)],
+                    life: 1.0,
+                    delay: radius / 12,
+                    decay: 0.02 + Math.random() * 0.04
+                });
+            }
+        });
+
         function draw() {
-            // Draw a semi-transparent black rectangle over the canvas.
-            // This creates the fading trail effect as old characters are gradually painted over with black.
-            ctx.fillStyle = 'rgba(0, 0, 0, 0.05)';
-            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            // 1. GUARANTEED PURE BLACK BACKGROUND EVERY FRAME
+            // This permanently solves the dirty grey accumulation bug
+            ctx.fillStyle = '#000000';
+            ctx.fillRect(0, 0, window.innerWidth, window.innerHeight);
 
-            // Set the font (we'll change colors inside the loop)
             ctx.font = fontSize + 'px monospace';
-            ctx.textBaseline = 'top'; // Ensures precise coordinate alignment for erasing
+            ctx.textBaseline = 'top';
 
-            // Loop over every column
-            for (let i = 0; i < drops.length; i++) {
-                let currentText;
-                let prevText = null;
+            // 2. MATHEMATICAL TRAIL RENDERER
+            const whiteHeadsToDraw = []; // Store heads to draw them ON TOP of all green trails
 
-                // Check if this column is currently dropping a special word
-                if (activeWords[i] !== null) {
-                    let word = activeWords[i].word;
-                    let idx = activeWords[i].charIndex;
+            for (let i = 0; i < columns; i++) {
 
-                    currentText = word[idx]; // The bright white head
-                    if (idx > 0) {
-                        prevText = word[idx - 1]; // The green trail character
+                // --- ABNORMALITIES LOGIC (Stuttering & Sidestepping) ---
+                if (!anomalies[i] && drops[i] > 0) {
+                    if (canSidestep[i] && Math.random() < 0.01) {
+                        // Trigger a horizontal jump (exactly 1 column left or right)
+                        const jumpOffset = Math.random() < 0.5 ? -1 : 1;
+                        // Jump lasts strictly for a couple of letters (2 to 4 rows)
+                        anomalies[i] = { type: 'sidestep', offset: jumpOffset, remainingLetters: Math.floor(Math.random() * 3) + 2 };
+                    } else if (Math.random() < 0.002) {
+                        // Very rarely trigger a stutter anomaly
+                        anomalies[i] = { type: 'stutter', timer: Math.floor(Math.random() * 15) + 5 };
                     }
-
-                    activeWords[i].charIndex++;
-
-                    // If we've finished the word, go back to random characters
-                    if (activeWords[i].charIndex >= word.length) {
-                        activeWords[i] = null;
-                    }
-                } else {
-                    // Pick a random character for the white head
-                    currentText = charArray[Math.floor(Math.random() * charArray.length)];
-                    // Pick a DIFFERENT random character for the green trail left behind
-                    // This creates the illusion of the characters instantly changing as they fall
-                    prevText = charArray[Math.floor(Math.random() * charArray.length)];
                 }
 
-                // Draw the PREVIOUS character in GREEN (to overwrite the old white head)
-                if (prevText !== null && drops[i] > 0) {
-                    // Erase the glowing white head from the previous frame completely with a black square
-                    // This guarantees NO white bleeds into the green trail
-                    ctx.fillStyle = '#000';
-                    ctx.fillRect(i * fontSize, (drops[i] - 1) * fontSize, fontSize, fontSize);
-
-                    // Draw the green trail character in its place
-                    ctx.fillStyle = '#0F0'; // Bright Matrix Green
-                    ctx.fillText(prevText, i * fontSize, (drops[i] - 1) * fontSize);
+                sidestepOffset[i] = 0;
+                if (anomalies[i]) {
+                    if (anomalies[i].type === 'stutter') {
+                        anomalies[i].timer--;
+                        if (anomalies[i].timer <= 0) anomalies[i] = null;
+                    } else if (anomalies[i].type === 'sidestep') {
+                        sidestepOffset[i] = anomalies[i].offset;
+                    }
                 }
 
-                // Draw the CURRENT character at the head in neon white/bluish with a GLOW
-                // ONLY draw if the drop is actually on the screen (not in a void above)
-                if (drops[i] >= 0) {
-                    ctx.shadowBlur = 12;         // Add glowing effect
-                    ctx.shadowColor = '#AAFFFF'; // Slightly bluish white glow
-                    ctx.fillStyle = '#FFFFFF';   // Pure white text
-                    ctx.fillText(currentText, i * fontSize, drops[i] * fontSize);
+                // If stuttering, we don't move the drop this frame
+                if (!anomalies[i] || anomalies[i].type !== 'stutter') {
+                    drops[i] += speeds[i];
                 }
 
-                // Reset shadow blur so the green trail and glitches don't glow
-                ctx.shadowBlur = 0;
+                let headY = Math.floor(drops[i]);
+                // Determine which column the head is currently in (handles jumping)
+                let targetCol = Math.max(0, Math.min(columns - 1, i + sidestepOffset[i]));
 
-                // If the drop has reached the bottom of the screen AND a random chance occurs,
-                // reset it to the top. The random chance staggers the drops so they don't fall in a straight line.
-                // We check if it's well past the bottom so the trail has time to fade out before resetting.
-                if (drops[i] * fontSize > canvas.height + 100 && Math.random() > 0.90) {
-
-                    // --- CLUSTERING AND VOIDS LOGIC ---
-                    let newStart = -Math.floor(Math.random() * 50); // Default: start in a small void above screen
-
-                    // 40% chance to CLUSTER with the column to its LEFT
-                    if (i > 0 && drops[i-1] > 0 && drops[i-1] < canvas.height/fontSize && Math.random() > 0.6) {
-                        newStart = drops[i-1] - Math.floor(Math.random() * 15); // Start slightly above the neighbor
+                // Setup the new bright white head ONLY when we actually cross into a new row
+                if (headY !== lastHeadY[i]) {
+                    // If we are currently sidestepping, count down exactly how many letters have dropped
+                    if (anomalies[i] && anomalies[i].type === 'sidestep') {
+                        anomalies[i].remainingLetters--;
+                        if (anomalies[i].remainingLetters <= 0) {
+                            anomalies[i] = null; // Snap back to original trajectory
+                            targetCol = i; // Instantly restore column targeting for this frame
+                        }
                     }
-                    // 40% chance to CLUSTER with the column to its RIGHT
-                    else if (i < columns - 1 && drops[i+1] > 0 && drops[i+1] < canvas.height/fontSize && Math.random() > 0.6) {
-                        newStart = drops[i+1] - Math.floor(Math.random() * 15);
+
+                    if (headY >= 0 && headY < rows) {
+                        gridBright[targetCol][headY] = 1.0; // Max brightness in target column
+
+                        if (activeWords[i] !== null) {
+                            let word = activeWords[i].word;
+                            let idx = activeWords[i].charIndex;
+                            gridChars[targetCol][headY] = word[idx];
+                            activeWords[i].charIndex++;
+                            if (activeWords[i].charIndex >= word.length) activeWords[i] = null;
+                        } else {
+                            gridChars[targetCol][headY] = charArray[Math.floor(Math.random() * charArray.length)];
+                        }
                     }
-                    // 15% chance to create a MASSIVE VOID (long empty pause for this column)
-                    else if (Math.random() > 0.85) {
+                    lastHeadY[i] = headY;
+                }
+
+                // Process every cell in this specific column to draw its green trails
+                for (let j = 0; j < rows; j++) {
+                    if (gridBright[i][j] > 0) {
+                        gridBright[i][j] -= 0.02;
+
+                        if (gridBright[i][j] <= 0) {
+                            gridBright[i][j] = 0;
+                            continue;
+                        }
+
+                        // Draw the fading green trail character
+                        ctx.fillStyle = `rgba(0, 255, 0, ${gridBright[i][j]})`;
+                        ctx.fillText(gridChars[i][j], i * fontSize, j * fontSize);
+                    }
+                }
+
+                // Save the white head so it draws perfectly over top of all trails
+                if (headY >= 0 && headY < rows) {
+                    whiteHeadsToDraw.push({
+                        x: targetCol * fontSize,
+                        y: headY * fontSize,
+                        char: gridChars[targetCol][headY]
+                    });
+                }
+
+                // Trail Glitch Logic
+                if (activeWords[i] === null && headY > 3 && Math.random() < 0.5) {
+                    const distanceFromHead = Math.floor(Math.pow(Math.random(), 3) * 40);
+                    const glitchRow = headY - distanceFromHead;
+                    if (glitchRow >= 0 && glitchRow < rows && gridBright[targetCol][glitchRow] > 0) {
+                        gridChars[targetCol][glitchRow] = charArray[Math.floor(Math.random() * charArray.length)];
+                    }
+                }
+
+                // Clustering, Voids, and Death Logic
+                // A streak dies and resets if it passes its designated death point (either mid-screen or off-screen)
+                if (headY > dropDeathY[i] && Math.random() > 0.90) {
+                    let newStart = -Math.floor(Math.random() * 50);
+
+                    // Tighter speed matching for clusters
+                    if (i > 0 && drops[i-1] > 0 && drops[i-1] < rows && Math.random() > 0.4) {
+                        newStart = drops[i-1] - Math.floor(Math.random() * 10);
+                        speeds[i] = speeds[i-1] * (0.95 + Math.random() * 0.1);
+                    } else if (i < columns - 1 && drops[i+1] > 0 && drops[i+1] < rows && Math.random() > 0.4) {
+                        newStart = drops[i+1] - Math.floor(Math.random() * 10);
+                        speeds[i] = speeds[i+1] * (0.95 + Math.random() * 0.1);
+                    } else if (Math.random() > 0.85) {
                         newStart = -Math.floor(Math.random() * 200);
+                        speeds[i] = 0.6 + Math.random() * 0.6;
+                    } else {
+                        speeds[i] = 0.6 + Math.random() * 0.6;
                     }
+
+                    // Clamp speed to prevent clustering from causing them to get too fast over time
+                    speeds[i] = Math.max(0.5, Math.min(1.3, speeds[i]));
 
                     drops[i] = newStart;
+                    setDropDeathY(i); // Assign a new random death point for its next life
 
-                    // Very rarely (2% chance), when a drop resets, start a special word
                     if (Math.random() < 0.02) {
                         activeWords[i] = {
                             word: specialWords[Math.floor(Math.random() * specialWords.length)],
@@ -179,153 +281,57 @@
                         };
                     }
                 }
-
-                // Move the drop down by one row for the next frame
-                drops[i]++;
             }
 
-            // --- ADD RANDOM CHARACTER FLIPPING IN THE TRAIL ---
-            // We draw these with partial opacity so they blend seamlessly into the fading trail
-            ctx.fillStyle = 'rgba(0, 255, 0, 0.4)';
-            for (let i = 0; i < columns; i++) {
-                // Only glitch random columns, and avoid glitching special words to keep them readable
-                // Increased overall probability to 0.5 to keep it busy near the head
-                if (activeWords[i] === null && drops[i] > 3 && Math.random() < 0.5) {
-                    // Bias the random selection heavily towards the bottom of the trail (near the head)
-                    // Cubing the random number creates a curve strongly weighted towards 0.
-                    const trailLength = drops[i] - 2;
-                    const distanceFromHead = Math.floor(Math.pow(Math.random(), 3) * (trailLength + 1));
-                    const randRow = trailLength - distanceFromHead;
+            // Draw all pure white heads globally so they stay on top
+            ctx.fillStyle = '#FFFFFF';
+            for (let i = 0; i < whiteHeadsToDraw.length; i++) {
+                ctx.fillText(whiteHeadsToDraw[i].char, whiteHeadsToDraw[i].x, whiteHeadsToDraw[i].y);
+            }
 
-                    const randText = charArray[Math.floor(Math.random() * charArray.length)];
-                    ctx.fillText(randText, i * fontSize, randRow * fontSize);
+            // 3. INTERACTIVE CLICK SPARKS
+            for (let i = glowingClusters.length - 1; i >= 0; i--) {
+                let spark = glowingClusters[i];
+                if (spark.delay > 0) {
+                    spark.delay -= 1;
+                    continue;
                 }
-            }
-
-            // ==========================================
-            // --- INTERACTIVE COMPOSITING TO DISPLAY ---
-            // ==========================================
-
-            // 1. Copy the pure Matrix rain to the visible display
-            displayCtx.clearRect(0, 0, displayCanvas.width, displayCanvas.height);
-            displayCtx.drawImage(canvas, 0, 0);
-
-            // 2. --- CLICK WAVES EFFECT ---
-            // Loop backwards so we can safely remove dead waves
-            for (let i = waves.length - 1; i >= 0; i--) {
-                let w = waves[i];
-                w.radius += w.speed;
-
-                // Remove the wave if it expands off screen
-                if (w.radius > w.maxRadius) {
-                    waves.splice(i, 1);
+                spark.life -= spark.decay;
+                if (spark.life <= 0) {
+                    glowingClusters.splice(i, 1);
                     continue;
                 }
 
-                // Calculate how many characters to draw to form a solid ring
-                const circumference = 2 * Math.PI * w.radius;
-                const numChars = Math.floor(circumference / (fontSize * 0.8));
-
-                // The wave fades out as it gets larger
-                displayCtx.fillStyle = `rgba(255, 255, 255, ${1 - w.radius / w.maxRadius})`;
-                displayCtx.font = fontSize + 'px monospace';
-                displayCtx.textBaseline = 'top';
-
-                for (let j = 0; j < numChars; j++) {
-                    const angle = (j / numChars) * Math.PI * 2;
-
-                    // Add a wavy/distortion math function to the radius
-                    const wavyRadius = w.radius + Math.sin(angle * 15 + w.radius * 0.1) * 15;
-
-                    const charX = w.x + Math.cos(angle) * wavyRadius;
-                    const charY = w.y + Math.sin(angle) * wavyRadius;
-
-                    // Snap the coordinates back to the strict Matrix grid
-                    const gridX = Math.floor(charX / fontSize) * fontSize;
-                    const gridY = Math.floor(charY / fontSize) * fontSize;
-
-                    const char = charArray[Math.floor(Math.random() * charArray.length)];
-                    displayCtx.fillText(char, gridX, gridY);
-                }
+                ctx.shadowBlur = 25 * spark.life;
+                ctx.shadowColor = `rgba(0, 150, 255, ${spark.life})`;
+                ctx.fillStyle = `rgba(220, 240, 255, ${spark.life})`;
+                ctx.fillText(spark.char, spark.x, spark.y);
             }
-
-            // 3. --- MOUSE LENS ZOOM EFFECT ---
-            if (mouseX >= 0 && mouseY >= 0) {
-                const lensRadius = 120;
-                const zoom = 1.8;
-
-                displayCtx.save();
-
-                // Create a circular clipping mask
-                displayCtx.beginPath();
-                displayCtx.arc(mouseX, mouseY, lensRadius, 0, Math.PI * 2);
-                displayCtx.clip();
-
-                // Clear the un-zoomed text underneath the lens
-                displayCtx.clearRect(mouseX - lensRadius, mouseY - lensRadius, lensRadius * 2, lensRadius * 2);
-
-                // Draw a zoomed-in snapshot of the offscreen canvas
-                displayCtx.drawImage(
-                    canvas,
-                    mouseX - lensRadius / zoom, mouseY - lensRadius / zoom, // Source X, Y
-                    (lensRadius * 2) / zoom, (lensRadius * 2) / zoom,       // Source Width, Height
-                    mouseX - lensRadius, mouseY - lensRadius,               // Destination X, Y
-                    lensRadius * 2, lensRadius * 2                          // Destination Width, Height
-                );
-
-                // Add a faint sci-fi cyan glow/border to the lens edge
-                displayCtx.strokeStyle = 'rgba(170, 255, 255, 0.4)';
-                displayCtx.lineWidth = 2;
-                displayCtx.stroke();
-
-                // Add a subtle glass-like inner shadow
-                const gradient = displayCtx.createRadialGradient(mouseX, mouseY, lensRadius * 0.8, mouseX, mouseY, lensRadius);
-                gradient.addColorStop(0, 'rgba(255, 255, 255, 0)');
-                gradient.addColorStop(1, 'rgba(170, 255, 255, 0.15)');
-                displayCtx.fillStyle = gradient;
-                displayCtx.fill();
-
-                displayCtx.restore();
-            }
+            ctx.shadowBlur = 0;
         }
 
         let drawInterval;
-        const targetFallTimeMs = 4000; // Target time for a drop to go top to bottom (4 seconds)
+        const targetFallTimeMs = 4000;
 
         function startAnimation() {
-            // Clear any existing animation loop
             if (drawInterval) clearInterval(drawInterval);
-
-            // Calculate how many rows exist on the current screen
-            const totalRows = canvas.height / fontSize;
-
-            // Calculate how many milliseconds each frame should take to hit the target time
+            const totalRows = window.innerHeight / fontSize;
             const intervalMs = targetFallTimeMs / totalRows;
-
-            // Start the loop with the dynamically calculated speed
             drawInterval = setInterval(draw, intervalMs);
         }
 
-        // Handle window resizing smoothly
         window.addEventListener('resize', () => {
-            displayCanvas.width = window.innerWidth;
-            displayCanvas.height = window.innerHeight;
-            canvas.width = window.innerWidth;
-            canvas.height = window.innerHeight;
+            // Re-apply HD scaling on resize
+            canvas.width = window.innerWidth * HD_SCALER;
+            canvas.height = window.innerHeight * HD_SCALER;
+            canvas.style.width = window.innerWidth + 'px';
+            canvas.style.height = window.innerHeight + 'px';
+            ctx.scale(HD_SCALER, HD_SCALER);
 
-            // Recalculate columns and add new drops if the screen got wider
-            const newColumns = canvas.width / fontSize;
-            for (let x = drops.length; x < newColumns; x++) {
-                // Initialize new columns with voids
-                drops[x] = -Math.floor(Math.random() * 100);
-                activeWords[x] = null;
-            }
-
-            // Recalculate and update the animation speed for the new height
+            initData();
             startAnimation();
         });
 
-        // Start the animation initially
         startAnimation();
     </script>
 </body>
