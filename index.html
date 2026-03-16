@@ -1,0 +1,202 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Matrix Digital Rain</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            background-color: #000;
+            overflow: hidden; /* Hide scrollbars to make it truly full screen */
+        }
+        canvas {
+            display: block;
+        }
+    </style>
+</head>
+<body>
+    <canvas id="matrix"></canvas>
+
+    <script>
+        const canvas = document.getElementById('matrix');
+        const ctx = canvas.getContext('2d');
+
+        // Make the canvas full screen
+        canvas.width = window.innerWidth;
+        canvas.height = window.innerHeight;
+
+        // The characters to display: Latin + Numerals + Katakana (classic Matrix mix)
+        const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789@#$%^&*アァカサタナハマヤャラワガザダバパイィキシチニヒミリヰギジヂビピウゥクスツヌフムユュルグズブヅプエェケセテネヘメレゲゼデベペオォコソトノホモヨョロゴゾドボポヴッン';
+        const charArray = chars.split('');
+
+        // Special words to randomly drop
+        const specialWords = ["ARCOVERSE", "Hekuran", "Musli"];
+
+        const fontSize = 16;
+        const columns = canvas.width / fontSize; // Number of columns for the rain
+
+        // Array to track the Y coordinate (drop position) of each column
+        // We start them all at 1
+        const drops = [];
+        // Array to track if a column is currently spelling a special word
+        const activeWords = [];
+        for (let x = 0; x < columns; x++) {
+            // Start with staggered negative values so the rain begins organically, not all at once
+            drops[x] = -Math.floor(Math.random() * 100);
+            activeWords[x] = null;
+        }
+
+        function draw() {
+            // Draw a semi-transparent black rectangle over the canvas.
+            // This creates the fading trail effect as old characters are gradually painted over with black.
+            ctx.fillStyle = 'rgba(0, 0, 0, 0.05)';
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+            // Set the font (we'll change colors inside the loop)
+            ctx.font = fontSize + 'px monospace';
+            ctx.textBaseline = 'top'; // Ensures precise coordinate alignment for erasing
+
+            // Loop over every column
+            for (let i = 0; i < drops.length; i++) {
+                let currentText;
+                let prevText = null;
+
+                // Check if this column is currently dropping a special word
+                if (activeWords[i] !== null) {
+                    let word = activeWords[i].word;
+                    let idx = activeWords[i].charIndex;
+
+                    currentText = word[idx]; // The bright white head
+                    if (idx > 0) {
+                        prevText = word[idx - 1]; // The green trail character
+                    }
+
+                    activeWords[i].charIndex++;
+
+                    // If we've finished the word, go back to random characters
+                    if (activeWords[i].charIndex >= word.length) {
+                        activeWords[i] = null;
+                    }
+                } else {
+                    // Pick a random character for the white head
+                    currentText = charArray[Math.floor(Math.random() * charArray.length)];
+                    // Pick a DIFFERENT random character for the green trail left behind
+                    // This creates the illusion of the characters instantly changing as they fall
+                    prevText = charArray[Math.floor(Math.random() * charArray.length)];
+                }
+
+                // Draw the PREVIOUS character in GREEN (to overwrite the old white head)
+                if (prevText !== null && drops[i] > 0) {
+                    // Erase the glowing white head from the previous frame completely with a black square
+                    // This guarantees NO white bleeds into the green trail
+                    ctx.fillStyle = '#000';
+                    ctx.fillRect(i * fontSize, (drops[i] - 1) * fontSize, fontSize, fontSize);
+
+                    // Draw the green trail character in its place
+                    ctx.fillStyle = '#0F0'; // Bright Matrix Green
+                    ctx.fillText(prevText, i * fontSize, (drops[i] - 1) * fontSize);
+                }
+
+                // Draw the CURRENT character at the head in neon white/bluish with a GLOW
+                // ONLY draw if the drop is actually on the screen (not in a void above)
+                if (drops[i] >= 0) {
+                    ctx.shadowBlur = 12;         // Add glowing effect
+                    ctx.shadowColor = '#AAFFFF'; // Slightly bluish white glow
+                    ctx.fillStyle = '#FFFFFF';   // Pure white text
+                    ctx.fillText(currentText, i * fontSize, drops[i] * fontSize);
+                }
+
+                // Reset shadow blur so the green trail and glitches don't glow
+                ctx.shadowBlur = 0;
+
+                // If the drop has reached the bottom of the screen AND a random chance occurs,
+                // reset it to the top. The random chance staggers the drops so they don't fall in a straight line.
+                // We check if it's well past the bottom so the trail has time to fade out before resetting.
+                if (drops[i] * fontSize > canvas.height + 100 && Math.random() > 0.90) {
+
+                    // --- CLUSTERING AND VOIDS LOGIC ---
+                    let newStart = -Math.floor(Math.random() * 50); // Default: start in a small void above screen
+
+                    // 40% chance to CLUSTER with the column to its LEFT
+                    if (i > 0 && drops[i-1] > 0 && drops[i-1] < canvas.height/fontSize && Math.random() > 0.6) {
+                        newStart = drops[i-1] - Math.floor(Math.random() * 15); // Start slightly above the neighbor
+                    }
+                    // 40% chance to CLUSTER with the column to its RIGHT
+                    else if (i < columns - 1 && drops[i+1] > 0 && drops[i+1] < canvas.height/fontSize && Math.random() > 0.6) {
+                        newStart = drops[i+1] - Math.floor(Math.random() * 15);
+                    }
+                    // 15% chance to create a MASSIVE VOID (long empty pause for this column)
+                    else if (Math.random() > 0.85) {
+                        newStart = -Math.floor(Math.random() * 200);
+                    }
+
+                    drops[i] = newStart;
+
+                    // Very rarely (2% chance), when a drop resets, start a special word
+                    if (Math.random() < 0.02) {
+                        activeWords[i] = {
+                            word: specialWords[Math.floor(Math.random() * specialWords.length)],
+                            charIndex: 0
+                        };
+                    }
+                }
+
+                // Move the drop down by one row for the next frame
+                drops[i]++;
+            }
+
+            // --- ADD RANDOM CHARACTER FLIPPING IN THE TRAIL ---
+            // We draw these with partial opacity so they blend seamlessly into the fading trail
+            ctx.fillStyle = 'rgba(0, 255, 0, 0.4)';
+            for (let i = 0; i < columns; i++) {
+                // Only glitch random columns, and avoid glitching special words to keep them readable
+                if (activeWords[i] === null && drops[i] > 3 && Math.random() < 0.3) {
+                    // Pick a random row somewhere in the fading trail above the head
+                    const randRow = Math.floor(Math.random() * (drops[i] - 2));
+                    const randText = charArray[Math.floor(Math.random() * charArray.length)];
+                    ctx.fillText(randText, i * fontSize, randRow * fontSize);
+                }
+            }
+        }
+
+        let drawInterval;
+        const targetFallTimeMs = 4000; // Target time for a drop to go top to bottom (4 seconds)
+
+        function startAnimation() {
+            // Clear any existing animation loop
+            if (drawInterval) clearInterval(drawInterval);
+
+            // Calculate how many rows exist on the current screen
+            const totalRows = canvas.height / fontSize;
+
+            // Calculate how many milliseconds each frame should take to hit the target time
+            const intervalMs = targetFallTimeMs / totalRows;
+
+            // Start the loop with the dynamically calculated speed
+            drawInterval = setInterval(draw, intervalMs);
+        }
+
+        // Handle window resizing smoothly
+        window.addEventListener('resize', () => {
+            canvas.width = window.innerWidth;
+            canvas.height = window.innerHeight;
+
+            // Recalculate columns and add new drops if the screen got wider
+            const newColumns = canvas.width / fontSize;
+            for (let x = drops.length; x < newColumns; x++) {
+                // Initialize new columns with voids
+                drops[x] = -Math.floor(Math.random() * 100);
+                activeWords[x] = null;
+            }
+
+            // Recalculate and update the animation speed for the new height
+            startAnimation();
+        });
+
+        // Start the animation initially
+        startAnimation();
+    </script>
+</body>
+</html>
