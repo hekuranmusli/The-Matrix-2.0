@@ -23,10 +23,44 @@
     <script src="words.js"></script>
 
     <script>
-        const canvas = document.getElementById('matrix');
+        // Main visible canvas
+        const displayCanvas = document.getElementById('matrix');
+        const displayCtx = displayCanvas.getContext('2d');
+
+        // Offscreen canvas for the base Matrix rain effect
+        const canvas = document.createElement('canvas');
         const ctx = canvas.getContext('2d');
 
-        // Make the canvas full screen
+        // Interactivity State
+        let mouseX = -1000;
+        let mouseY = -1000;
+        let waves = [];
+
+        // Track mouse position
+        window.addEventListener('mousemove', (e) => {
+            mouseX = e.clientX;
+            mouseY = e.clientY;
+        });
+
+        window.addEventListener('mouseout', () => {
+            mouseX = -1000;
+            mouseY = -1000;
+        });
+
+        // Track clicks to trigger waves
+        window.addEventListener('click', (e) => {
+            waves.push({
+                x: e.clientX,
+                y: e.clientY,
+                radius: 0,
+                maxRadius: Math.max(window.innerWidth, window.innerHeight),
+                speed: 15
+            });
+        });
+
+        // Make the canvases full screen
+        displayCanvas.width = window.innerWidth;
+        displayCanvas.height = window.innerHeight;
         canvas.width = window.innerWidth;
         canvas.height = window.innerHeight;
 
@@ -167,6 +201,92 @@
                     ctx.fillText(randText, i * fontSize, randRow * fontSize);
                 }
             }
+
+            // ==========================================
+            // --- INTERACTIVE COMPOSITING TO DISPLAY ---
+            // ==========================================
+
+            // 1. Copy the pure Matrix rain to the visible display
+            displayCtx.clearRect(0, 0, displayCanvas.width, displayCanvas.height);
+            displayCtx.drawImage(canvas, 0, 0);
+
+            // 2. --- CLICK WAVES EFFECT ---
+            // Loop backwards so we can safely remove dead waves
+            for (let i = waves.length - 1; i >= 0; i--) {
+                let w = waves[i];
+                w.radius += w.speed;
+
+                // Remove the wave if it expands off screen
+                if (w.radius > w.maxRadius) {
+                    waves.splice(i, 1);
+                    continue;
+                }
+
+                // Calculate how many characters to draw to form a solid ring
+                const circumference = 2 * Math.PI * w.radius;
+                const numChars = Math.floor(circumference / (fontSize * 0.8));
+
+                // The wave fades out as it gets larger
+                displayCtx.fillStyle = `rgba(255, 255, 255, ${1 - w.radius / w.maxRadius})`;
+                displayCtx.font = fontSize + 'px monospace';
+                displayCtx.textBaseline = 'top';
+
+                for (let j = 0; j < numChars; j++) {
+                    const angle = (j / numChars) * Math.PI * 2;
+
+                    // Add a wavy/distortion math function to the radius
+                    const wavyRadius = w.radius + Math.sin(angle * 15 + w.radius * 0.1) * 15;
+
+                    const charX = w.x + Math.cos(angle) * wavyRadius;
+                    const charY = w.y + Math.sin(angle) * wavyRadius;
+
+                    // Snap the coordinates back to the strict Matrix grid
+                    const gridX = Math.floor(charX / fontSize) * fontSize;
+                    const gridY = Math.floor(charY / fontSize) * fontSize;
+
+                    const char = charArray[Math.floor(Math.random() * charArray.length)];
+                    displayCtx.fillText(char, gridX, gridY);
+                }
+            }
+
+            // 3. --- MOUSE LENS ZOOM EFFECT ---
+            if (mouseX >= 0 && mouseY >= 0) {
+                const lensRadius = 120;
+                const zoom = 1.8;
+
+                displayCtx.save();
+
+                // Create a circular clipping mask
+                displayCtx.beginPath();
+                displayCtx.arc(mouseX, mouseY, lensRadius, 0, Math.PI * 2);
+                displayCtx.clip();
+
+                // Clear the un-zoomed text underneath the lens
+                displayCtx.clearRect(mouseX - lensRadius, mouseY - lensRadius, lensRadius * 2, lensRadius * 2);
+
+                // Draw a zoomed-in snapshot of the offscreen canvas
+                displayCtx.drawImage(
+                    canvas,
+                    mouseX - lensRadius / zoom, mouseY - lensRadius / zoom, // Source X, Y
+                    (lensRadius * 2) / zoom, (lensRadius * 2) / zoom,       // Source Width, Height
+                    mouseX - lensRadius, mouseY - lensRadius,               // Destination X, Y
+                    lensRadius * 2, lensRadius * 2                          // Destination Width, Height
+                );
+
+                // Add a faint sci-fi cyan glow/border to the lens edge
+                displayCtx.strokeStyle = 'rgba(170, 255, 255, 0.4)';
+                displayCtx.lineWidth = 2;
+                displayCtx.stroke();
+
+                // Add a subtle glass-like inner shadow
+                const gradient = displayCtx.createRadialGradient(mouseX, mouseY, lensRadius * 0.8, mouseX, mouseY, lensRadius);
+                gradient.addColorStop(0, 'rgba(255, 255, 255, 0)');
+                gradient.addColorStop(1, 'rgba(170, 255, 255, 0.15)');
+                displayCtx.fillStyle = gradient;
+                displayCtx.fill();
+
+                displayCtx.restore();
+            }
         }
 
         let drawInterval;
@@ -188,6 +308,8 @@
 
         // Handle window resizing smoothly
         window.addEventListener('resize', () => {
+            displayCanvas.width = window.innerWidth;
+            displayCanvas.height = window.innerHeight;
             canvas.width = window.innerWidth;
             canvas.height = window.innerHeight;
 
