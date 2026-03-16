@@ -155,10 +155,14 @@
             ctx.fillStyle = 'rgba(0, 255, 0, 0.4)';
             for (let i = 0; i < columns; i++) {
                 // Only glitch random columns, and avoid glitching special words to keep them readable
-                // Increased probability from 0.3 to 0.4 for faster visible flipping
-                if (activeWords[i] === null && drops[i] > 3 && Math.random() < 0.4) {
-                    // Pick a random row somewhere in the fading trail above the head
-                    const randRow = Math.floor(Math.random() * (drops[i] - 2));
+                // Increased overall probability to 0.5 to keep it busy near the head
+                if (activeWords[i] === null && drops[i] > 3 && Math.random() < 0.5) {
+                    // Bias the random selection heavily towards the bottom of the trail (near the head)
+                    // Cubing the random number creates a curve strongly weighted towards 0.
+                    const trailLength = drops[i] - 2;
+                    const distanceFromHead = Math.floor(Math.pow(Math.random(), 3) * (trailLength + 1));
+                    const randRow = trailLength - distanceFromHead;
+
                     const randText = charArray[Math.floor(Math.random() * charArray.length)];
                     ctx.fillText(randText, i * fontSize, randRow * fontSize);
                 }
