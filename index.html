@@ -155,7 +155,8 @@
             ctx.fillStyle = 'rgba(0, 255, 0, 0.4)';
             for (let i = 0; i < columns; i++) {
                 // Only glitch random columns, and avoid glitching special words to keep them readable
-                if (activeWords[i] === null && drops[i] > 3 && Math.random() < 0.3) {
+                // Increased probability from 0.3 to 0.4 for faster visible flipping
+                if (activeWords[i] === null && drops[i] > 3 && Math.random() < 0.4) {
                     // Pick a random row somewhere in the fading trail above the head
                     const randRow = Math.floor(Math.random() * (drops[i] - 2));
                     const randText = charArray[Math.floor(Math.random() * charArray.length)];
