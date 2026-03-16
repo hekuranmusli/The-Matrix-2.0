@@ -19,6 +19,9 @@
 <body>
     <canvas id="matrix"></canvas>
 
+    <!-- Load the external dictionary file so the algorithm can access it -->
+    <script src="words.js"></script>
+
     <script>
         const canvas = document.getElementById('matrix');
         const ctx = canvas.getContext('2d');
@@ -27,12 +30,12 @@
         canvas.width = window.innerWidth;
         canvas.height = window.innerHeight;
 
-        // The characters to display: Latin + Numerals + Katakana (classic Matrix mix)
-        const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789@#$%^&*アァカサタナハマヤャラワガザダバパイィキシチニヒミリヰギジヂビピウゥクスツヌフムユュルグズブヅプエェケセテネヘメレゲゼデベペオォコソトノホモヨョロゴゾドボポヴッン';
+        // Pull the characters from the external words.js file
+        const chars = matrixConfig.characters;
         const charArray = chars.split('');
 
-        // Special words to randomly drop
-        const specialWords = ["ARCOVERSE", "Hekuran", "Musli"];
+        // Pull the special easter egg words from the external words.js file
+        const specialWords = matrixConfig.specialWords;
 
         const fontSize = 16;
         const columns = canvas.width / fontSize; // Number of columns for the rain
