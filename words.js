@@ -7,6 +7,7 @@ const matrixConfig = {
     "specialWords": [
         "ARCOVERSE",
         "Hekuran",
+        "Dorentina",
         "Musli",
         "NEO",
         "TRINITY",
